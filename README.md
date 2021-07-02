@@ -1,3 +1,1 @@
-# PMP
-
-PMP collection for Ansible
+jpclipffel/pmp/README.md
