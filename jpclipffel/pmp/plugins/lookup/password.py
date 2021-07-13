@@ -5,6 +5,17 @@
 
 from __future__ import (absolute_import, division, print_function)
 
+import os
+import re
+import json
+import shelve
+import fcntl
+import urllib.parse
+
+from ansible.errors import AnsibleError, AnsibleLookupError
+from ansible.plugins.lookup import LookupBase
+from ansible.module_utils.urls import open_url
+
 
 EXAMPLES = """
   - name: Get the password for the extact resource name
@@ -23,19 +34,9 @@ RETURN = """
 """
 
 
-import os
-import re
-import json
-import urllib.parse
-
-from ansible.errors import AnsibleError
-from ansible.plugins.lookup import LookupBase
-from ansible.module_utils.urls import open_url
-
-
 # Set PMP URL from environment
 if os.getenv('PMP_URL') is not None:
-    PMP_URL = os.environ['PMP_URL']
+    PMP_URL = os.environ['PMP_URL'].rstrip('/')
 else:
     raise AnsibleError("PMP error: PMP_URL environment variable is not set")
 
@@ -62,20 +63,26 @@ class LookupModule(LookupBase):
         :param validated_certs:     Validate SSL certificate
         """
         # Query PMP
-        response = open_url(
-            f'{PMP_URL}/{query}',
-            method='GET',
-            headers=headers,
-            validate_certs=validate_certs
-        )
-        # Parse response
-        message = json.loads(response.read().decode('utf-8'))
-        # Return operation, result and details
-        return (
-            message.get('operation', None),
-            message.get('operation', {}).get('result'),
-            message.get('operation', {}).get('Details'),
-        )
+        try:
+            response = open_url(
+                f'{PMP_URL}/{query}',
+                method=method,
+                headers=headers,
+                validate_certs=validate_certs
+            )
+            # Parse response
+            message = json.loads(response.read().decode('utf-8'))
+            # Return operation, result and details
+            return (
+                message.get('operation', None),
+                message.get('operation', {}).get('result'),
+                message.get('operation', {}).get('Details'),
+            )
+        except Exception as error:
+            raise AnsibleLookupError((
+                'PMP error: '
+                f'query="{query}", method="{method}", error="{str(error)}"'
+            ))
 
     def _get_resource_password(self, resource_id: str, account_id: str) -> str:
         """Fetches a resource's password.
@@ -123,10 +130,16 @@ class LookupModule(LookupBase):
             raise AnsibleError(f'PMP error: {str(result)}')
         return details['RESOURCEID'], details['ACCOUNTID']
 
-    def _search_resource_ids(self, resource_name: str, account_name: str) -> tuple:
+    def _search_resource_ids(self, resource_name: str,
+            account_name: str) -> tuple:
         """Fetches all resources and search for the given resource name.
+
+        :param resource_name:   The resource's name (support regex)
+        :param account_name:    The resource's account name
         """
+        # PRepare regex
         rex = re.compile(resource_name)
+        # Prepare URL
         url = (
             'restapi/json/v1/resources'
             f'?APP_AUTHTOKEN={PMP_AUTHTOKEN}'
@@ -134,28 +147,36 @@ class LookupModule(LookupBase):
         )
         # Query PMP
         operation, result, details = self._get(url)
-        # raise AnsibleError(len(details))
+        # Search resource
         for resource in details:
             if rex.match(resource.get('RESOURCE NAME')):
                 return self._get_resource_ids(
                     resource['RESOURCE NAME'],
                     account_name
                 )
-        return ()
+        raise AnsibleLookupError((
+            'Failed to lookup resource in PMP: '
+            f'resource="{resource_name}", account="{account_name}"'
+        ))
 
-    def run(self, terms, **kwargs):
+    def run(self, terms: tuple, **kwargs) -> tuple:
         """Lookup entry point.
 
-        :param terms: Resource name & account name
+        :param terms: Search mode, resource name, account name
         """
-        # Set lookup mode, resource name and account name from parameters
+        # self._shelve = shelve.open('pmp')
+        # self._lock   = open('pmp_lock')
+        # Set lookup mode, resource name and account name
         mode, resource_name, account_name = terms
-
+        # Run lookup
         if mode == 'exact':
-            return [self._get_resource_password(
+            result = (self._get_resource_password(
                 *self._get_resource_ids(resource_name, account_name)
-            ),]
+            ),)
         elif mode == 'regex':
-            return [self._get_resource_password(
+            result = (self._get_resource_password(
                 *self._search_resource_ids(resource_name, account_name)
-            ),]
+            ),)
+        # Close shelve and return
+        # self._shelve.close()
+        return result
