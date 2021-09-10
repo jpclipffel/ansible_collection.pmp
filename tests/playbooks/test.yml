@@ -1,0 +1,28 @@
+- name: Lookup
+  hosts: localhost
+  tasks:
+
+    - name: Lookup exact PMP password
+      set_fact:
+        _password: "{{ lookup('jpclipffel.pmp.password', 'exact', 'storage:emc unity:ansible account', 'ansible') }}"
+
+    - name: Debug
+      debug:
+        var: _password
+
+    - name: Lookup regex PMP password
+      set_fact:
+        _password: "{{ lookup('jpclipffel.pmp.password', 'regex', 'storage:emc unity:.*ansible.*', 'ansible') }}"
+
+    - name: Debug
+      debug:
+        var: _password
+
+
+- name: HTTPAPI
+  hosts: pmp
+  tasks:
+
+    - name: Get audit events
+      jpclipffel.pmp.audit:
+        type: Resource

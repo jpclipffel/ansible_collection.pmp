@@ -1,0 +1,16 @@
+# code: language=Ansible
+
+all:
+  children:
+    pmp:
+      vars:
+        ansible_network_os: jpclipffel.pmp.httpapi
+        ansible_connection: httpapi
+        ansible_httpapi_port: 443
+        ansible_httpapi_use_ssl: yes
+        ansible_httpapi_validate_certs: no
+        # ansible_user: "{{ d42_user | default(lookup('env', 'DEVICE42_USERNAME')) }}"
+        # ansible_password: "{{ d42_password | default(lookup('env', 'DEVICE42_PASSWORD')) }}"
+      hosts:
+        pmp.dt.ept.lu:
+        patricia.dt.ept.lu:
