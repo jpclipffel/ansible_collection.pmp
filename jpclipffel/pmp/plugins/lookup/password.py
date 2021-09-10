@@ -8,13 +8,16 @@ from __future__ import (absolute_import, division, print_function)
 import os
 import re
 import json
-import shelve
-import fcntl
 import urllib.parse
 
 from ansible.errors import AnsibleError, AnsibleLookupError
 from ansible.plugins.lookup import LookupBase
 from ansible.module_utils.urls import open_url
+
+from ansible_collections.jpclipffel.pmp.plugins.module_utils.pmp import (
+    pmp_envinfo,
+    pmp_parse_response
+)
 
 
 EXAMPLES = """
@@ -34,23 +37,16 @@ RETURN = """
 """
 
 
-# Set PMP URL from environment
-if os.getenv('PMP_URL') is not None:
-    PMP_URL = os.environ['PMP_URL'].rstrip('/')
-else:
-    raise AnsibleError("PMP error: PMP_URL environment variable is not set")
-
-
-# Set PMP token from environment
-if os.getenv('PMP_AUTHTOKEN') is not None:
-    PMP_AUTHTOKEN = os.environ['PMP_AUTHTOKEN']
-else:
-    raise AnsibleError("PMP error: PMP_AUTHTOKEN environment variable is not set")
-
-
 class LookupModule(LookupBase):
     """PMP lookup plugin implementation.
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Get PMP info
+        self.pmp_info = pmp_envinfo()
+        self.pmp_url = self.pmp_info['url']
+        self.pmp_authtoken = self.pmp_info['authtoken']
 
     def _get(self, query: str,
                 headers: dict = {'Content-Type': 'application/json'},
@@ -65,19 +61,12 @@ class LookupModule(LookupBase):
         # Query PMP
         try:
             response = open_url(
-                f'{PMP_URL}/{query}',
+                f'{self.pmp_url}/{query}',
                 method=method,
                 headers=headers,
                 validate_certs=validate_certs
             )
-            # Parse response
-            message = json.loads(response.read().decode('utf-8'))
-            # Return operation, result and details
-            return (
-                message.get('operation', None),
-                message.get('operation', {}).get('result'),
-                message.get('operation', {}).get('Details'),
-            )
+            return pmp_parse_response(response.read())
         except Exception as error:
             raise AnsibleLookupError((
                 'PMP error: '
@@ -93,7 +82,7 @@ class LookupModule(LookupBase):
         # Prepare query URL
         url = (
             'restapi/json/v1/resources/getResourceAccountDetails'
-            f'?APP_AUTHTOKEN={PMP_AUTHTOKEN}'
+            f'?APP_AUTHTOKEN={self.pmp_authtoken}'
             f'&APP_NAME=ANSIBLE'
             f'&RESOURCEID={resource_id}'
             f'&ACCOUNTID={account_id}'
@@ -118,7 +107,7 @@ class LookupModule(LookupBase):
         """
         url = (
             'restapi/json/v1/resources/getResourceIdAccountId'
-            f'?APP_AUTHTOKEN={PMP_AUTHTOKEN}'
+            f'?APP_AUTHTOKEN={self.pmp_authtoken}'
             f'&APP_NAME=Ansible'
             f'&RESOURCENAME={urllib.parse.quote(resource_name)}'
             f'&ACCOUNTNAME={urllib.parse.quote(account_name)}'
@@ -142,7 +131,7 @@ class LookupModule(LookupBase):
         # Prepare URL
         url = (
             'restapi/json/v1/resources'
-            f'?APP_AUTHTOKEN={PMP_AUTHTOKEN}'
+            f'?APP_AUTHTOKEN={self.pmp_authtoken}'
             f'&APP_NAME=Ansible'
         )
         # Query PMP
@@ -164,8 +153,6 @@ class LookupModule(LookupBase):
 
         :param terms: Search mode, resource name, account name
         """
-        # self._shelve = shelve.open('pmp')
-        # self._lock   = open('pmp_lock')
         # Set lookup mode, resource name and account name
         mode, resource_name, account_name = terms
         # Run lookup
@@ -177,6 +164,5 @@ class LookupModule(LookupBase):
             result = (self._get_resource_password(
                 *self._search_resource_ids(resource_name, account_name)
             ),)
-        # Close shelve and return
-        # self._shelve.close()
+        # Done
         return result
